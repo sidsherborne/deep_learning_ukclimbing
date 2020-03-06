@@ -1,3 +1,6 @@
+# Loading Libraries
+.libPaths("C:/Users/ecumdy/Documents/RLibrary")
+
 # Housekeeping
 library(magrittr)
 library(dplyr)
@@ -127,11 +130,11 @@ read_climb <- function(climb_id) {
     stars_html <- session %>% html_node(xpath = "//*[contains(concat( \" \", @class, \" \" ), concat( \" \", \"bg-light\", \" \" ))]") %>% html_node("#poll3") %>% as.character()
     stars <- stars_html %>% getBetweenAll('data-n="','"',.) %>% lapply(., extract_numeric) %>% extract2(1) %>% abs()
     mode_stars <- max(stars)
-    if(mode_stars == min(stars)) {
-      rating <- "None"
+    if(mode_stars == 0) {
+      rating <- 0
     } else {
       position_stars <- match(mode_stars, stars)
-      if (position_stars == 1) { rating <- "Three" } else if (position_stars == 2) { rating <- "Two"} else if (position_stars == 3) { rating <- "One"} else if (position_stars == 4) { rating <- "Zero"} else if (position_stars == 5) { rating <- "Rubbish"} else { rating <- "Missing"}
+      if (position_stars == 1) { rating <- 3 } else if (position_stars == 2) { rating <- 2} else if (position_stars == 3) { rating <- 1} else if (position_stars == 4) { rating <- 0} else if (position_stars == 5) { rating <- -1} else { rating <- "Missing"}
     }
     
     # Get Grade
@@ -161,16 +164,28 @@ all_climbs_bound <- all_climbs %>% bind_rows()
 # Merging with crag.
 crag_climb_data <- merge(stanage_climbs, all_climbs_bound, by = "id_climb", all = TRUE)
 
+# Trimming Whitespace
+crag_climb_data <- crag_climb_data %>% mutate_all(trimws)
+
 # Creating a document feature matrix from the comments after removing punctuation and stopwords.
 # Trimming so that only words used more than 50 times are included.
-dfm <- crag_climb_data %>% use_series("comment") %>% tokens(remove_punct = TRUE) %>% dfm() %>% dfm_remove(stopwords("english")) %>% dfm_trim(min_termfreq = 50, verbose = T)
+dfm <- crag_climb_data %>% use_series("comment") %>% tokens(remove_punct = TRUE) %>% dfm(stem = TRUE, remove = stopwords("english")) %>% dfm_remove(stopwords("english")) %>% dfm_trim(min_termfreq = 50, verbose = T)
 most_common_words <- dfm %>% textstat_frequency(n = 5000) %>% filter(!is.na(feature)) %>% use_series("feature") 
 dfm <- dfm %>% convert(to = "data.frame") %>% select(most_common_words)
+dfm <- dfm %>% rename_all(function(x) paste0("word_", x))
+
+# Removing Columns 
+crag_climb_data <- crag_climb_data %>% select(-one_of(c("name","climber","comment","partners")))
 
 # Binding with Main Data
-crag_climb_data <- crag_climb_data %>% bind_cols(dfm)
+crag_climb_data_flat <- crag_climb_data %>% bind_cols(dfm)
 
 # Flattening to single row per climb.
-crag_climb_data_flat <- crag_climb_data %>% select(-one_of(c("name","climber","comment","partner")))
-crag_climb_data_flat <- crag_climb_data_flat %>% fastDummies::dummy_cols(select_columns = c("id_buttress","crag_name","crag_rocktype","crag_faces","day_climb","month_climb","year_climb","discipline_climb","style_climb","rating_climb","grade_climb"), remove_selected_columns = TRUE)
-crag_climb_data_flat <- crag_climb_data_flat %>% group_by(id_climb) %>% summarise_all(mean, na.rm = TRUE) %>% tibble()
+crag_climb_data_flat <- crag_climb_data_flat %>% fastDummies::dummy_cols(select_columns = c("id_buttress","crag_name","crag_rocktype","crag_faces","day_climb","month_climb","year_climb","discipline_climb","style_climb","grade_climb"), remove_selected_columns = TRUE)
+crag_climb_data_flat <- crag_climb_data_flat %>% mutate_all(as.numeric) 
+crag_climb_data_flat <- crag_climb_data_flat %>% group_by(id_climb) %>% summarise_all(mean, na.rm = TRUE)
+
+write.csv(crag_climb_data_flat, "crag_climb_data_flat.csv")
+
+#crag_climb_data_flat <- crag_climb_data_flat %>% mutate(rating_climb = ifelse(rating_climb=="None", "Zero", rating_climb))
+#crag_climb_data_flat <- crag_climb_data_flat %>% mutate(rating_climb = forcats::fct_recode(rating_climb, "-1" = "Rubbish", "0" = "Zero", "1" = "One", "2" = "Two", "3" = "Three"))
